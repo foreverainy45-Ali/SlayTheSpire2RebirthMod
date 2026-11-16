@@ -23,6 +23,7 @@ internal sealed class RestartController
 {
     private readonly NGame _game;
     private readonly RestartUi _ui;
+    private readonly QuoteCatalog _quotes;
     private QuickSlCompatibility _sl;
     private INetGameService? _net;
     private RestartBallot? _ballot;
@@ -37,19 +38,29 @@ internal sealed class RestartController
     private string? _votePromptRequest;
     private DateTimeOffset _deadline;
     private string? _recovery;
+    private string? _currentQuote;
     private RunState? _observedState;
     private ulong _host;
     private bool _ticking;
     internal bool IsCommitted => _committed;
     internal bool DropOldNative => _dropNative;
+    internal bool NativeLoadingOpen => _ui.NativeLoadingOpen;
+    internal string? LoadingStatus => _ui.LoadingStatus;
+    internal string? LoadingQuote => _ui.LoadingQuote;
     private bool IsHost => _net?.Type is NetGameType.Host or NetGameType.Singleplayer;
     private bool IsMulti => _net?.Type is NetGameType.Host or NetGameType.Client;
+    private bool IsDaily => (_observedState ?? RunManager.Instance.DebugOnlyGetState())?.GameMode == GameMode.Daily;
     private static DateTimeOffset Now => DateTimeOffset.UtcNow;
 
     public RestartController(NGame game)
     {
         _game = game;
         _ui = new(game);
+        string assemblyDir = Path.GetDirectoryName(typeof(RestartController).Assembly.Location) ?? AppContext.BaseDirectory;
+        string quotePath = Path.Combine(assemblyDir, "SeedRestart.quotes.cfg");
+        _quotes = QuoteCatalog.Load(quotePath);
+        if (_quotes.Error == null) Log.Info($"[SeedRestart] Loaded {_quotes.Count} waiting quotes from {quotePath}.");
+        else Log.Warn("[SeedRestart] " + _quotes.Error + "; waiting screen will omit the quote.");
         _sl = new();
         game.GetTree().ProcessFrame += Tick;
     }
@@ -92,11 +103,16 @@ internal sealed class RestartController
                 return;
             }
             bool multiplayer = _net!.Type is NetGameType.Host or NetGameType.Client;
+            bool daily = IsDaily;
             bool confirmed = await JmcConfirmationPopup.ShowConfirmationAsync(
-                "确认换种重开",
-                multiplayer
-                    ? "当前对局会在全员同意后结束，并为每位玩家记为失败。\n\n保留各自角色与难度，在当前房间使用新随机种子回到第一幕涅奥？"
-                    : "当前对局会立即结束并记为失败。\n\n保留当前角色与难度，使用新的随机种子回到第一幕涅奥？",
+                daily ? "确认重开每日挑战" : "确认换种重开",
+                daily
+                    ? (multiplayer
+                        ? "当前每日挑战会在全员同意后结束，并为每位玩家记为失败。\n\n保留当日固定种子、角色、难度和选项，在当前房间回到第一幕涅奥？"
+                        : "当前每日挑战会立即结束并记为失败。\n\n保留当日固定种子、角色、难度和选项，回到第一幕涅奥？")
+                    : (multiplayer
+                        ? "当前对局会在全员同意后结束，并为每位玩家记为失败。\n\n保留各自角色与难度，在当前房间使用新随机种子重新开始？"
+                        : "当前对局会立即结束并记为失败。\n\n保留当前角色与难度，使用新的随机种子重新开始？"),
                 multiplayer ? "发起全员确认" : "记为失败并重开", "取消", true, typeof(RestartController).Assembly);
             Log.Info("[SeedRestart] Initial confirmation completed; approved=" + confirmed + ".");
             if (confirmed) SendRequest();
@@ -111,7 +127,8 @@ internal sealed class RestartController
         if (state == null || manager.HasRunEnded || manager.IsCleaningUp || _net == null) return "当前不在可重开的对局中";
         if (!_sl.Supported) return "当前 QuickSL 版本尚未适配；为保留其功能，换种重开已停用";
         if (_sl.IsBusy) return "快速 SL 正在审批或加载，请完成后再请求换种";
-        if (state.GameMode != GameMode.Standard) return "首版仅支持普通模式及普通模式的原生自定义修正项";
+        if (state.GameMode is not (GameMode.Standard or GameMode.Daily or GameMode.Blitz))
+            return "当前仅支持普通模式、每日挑战和 Blitz";
         if (state.Modifiers.Any(m => m.GetType().Assembly != typeof(RunState).Assembly)) return "当前自定义修正项尚未验证兼容";
         if (state.Players.Count is < 1 or > 4 || _net.Type is not (NetGameType.Singleplayer or NetGameType.Host or NetGameType.Client)) return "当前联机模式不受支持";
         if (manager.IsChangingRooms || _game.Transition.InTransition || _net.IsGameLoading) return "正在切换场景，请稍后重试";
@@ -273,9 +290,12 @@ internal sealed class RestartController
         bool approved;
         try
         {
+            bool daily = IsDaily;
             approved = await JmcConfirmationPopup.ShowConfirmationAsync(
-                "是否同意换种重开？",
-                "有玩家请求结束当前对局。全员同意后，本局会记为失败，并使用各自当前角色在原房间以新种子回到第一幕涅奥。",
+                daily ? "是否同意重开每日挑战？" : "是否同意换种重开？",
+                daily
+                    ? "有玩家请求结束当前每日挑战。全员同意后，本局会记为失败，并保留当日固定种子、选项和各自当前角色，在原房间回到第一幕涅奥。"
+                    : "有玩家请求结束当前对局。全员同意后，本局会记为失败，并使用各自当前角色在原房间以新种子重新开始。",
                 "同意并记为失败", "拒绝", true, typeof(RestartController).Assembly);
         }
         catch (Exception e)
@@ -315,10 +335,11 @@ internal sealed class RestartController
             if (Now >= _deadline) { Abort(_committed ? "新局加载超时，请保留恢复文件和日志" : "换种请求超时"); return; }
             if (IsHost && !_preparing && !_committed && _ballot!.Votes.SetEquals(_ballot.Members))
             {
-                string seed = RestartPlan.NewSeed(_observedState!.Rng.StringSeed);
-                if (_ballot.BeginPrepare(seed, _observedState.Rng.StringSeed, Now))
+                bool daily = _observedState!.GameMode == GameMode.Daily;
+                string seed = daily ? _observedState.Rng.StringSeed : RestartPlan.NewSeed(_observedState.Rng.StringSeed);
+                if (_ballot.BeginPrepare(seed, _observedState.Rng.StringSeed, Now, allowSameSeed: daily))
                 {
-                    _request = _request with { Seed = seed, Acts = RestartPlan.PickActs(_observedState!, seed, IsMulti) };
+                    _request = _request with { Seed = seed, Acts = RestartPlan.ActsForRestart(_observedState, seed, IsMulti) };
                     Broadcast(Message(MessageKind.Prepare));
                     StartPrepare();
                 }
@@ -350,6 +371,7 @@ internal sealed class RestartController
     {
         if (_sl.IsBusy) { Abort("快速 SL 正在执行"); return; }
         _preparing = true;
+        _currentQuote ??= _quotes.Next();
         _deadline = Now.AddSeconds(15);
         _plan = RestartPlan.Create(_observedState!, _request!.Seed, _request.Acts);
     }
@@ -417,9 +439,9 @@ internal sealed class RestartController
                 hidden.Players.AddRange(_plan.LobbyPlayers);
                 // Removes temporary lobby listeners without disconnecting or disposing input sync.
                 hidden.CleanUp(false);
-                manager.SetUpNewMultiplayer(_plan.NewState, hidden, _plan.ShouldSave);
+                manager.SetUpNewMultiplayer(_plan.NewState, hidden, _plan.ShouldSave, _plan.DailyTime);
             }
-            else manager.SetUpNewSingleplayer(_plan!.NewState, _plan.ShouldSave);
+            else manager.SetUpNewSingleplayer(_plan!.NewState, _plan.ShouldSave, _plan.DailyTime);
             // A reroll explicitly returns to Neow even for a profile still in the initial tutorial.
             // This does not change long-term unlocks or grant any opening reward automatically.
             _plan!.NewState.ExtraFields.StartedWithNeow = true;
@@ -465,7 +487,9 @@ internal sealed class RestartController
         RunManager.Instance.ActionExecutor.Unpause();
         CombatManager.Instance.Unpause();
         CleanupRecovery();
-        Log.Info($"[SeedRestart] Completed new seed {_request!.Seed}; reused original connection.");
+        Log.Info(IsDaily
+            ? $"[SeedRestart] Restarted daily seed {_request!.Seed}; reused original connection."
+            : $"[SeedRestart] Completed new seed {_request!.Seed}; reused original connection.");
         Reset();
         _ui.Close();
     }
@@ -512,6 +536,7 @@ internal sealed class RestartController
         _preparing = _readySent = _setupStarted = _startSent = _starting = _committed = _dropNative = _ownsPause = _failedAfterCommit = false;
         _votePromptRequest = null;
         _recovery = null;
+        _currentQuote = null;
         _observedState = RunManager.Instance.DebugOnlyGetState();
     }
 
@@ -546,7 +571,12 @@ internal sealed class RestartController
         if (_request == null || _failedAfterCommit) return;
         if (_committed || _preparing)
         {
-            _ui.Show("loading", _committed ? (_starting ? "正在进入涅奥，等待所有玩家加载…" : "正在创建新种子对局…") : "正在准备新局，等待安全切换…");
+            string status = !_committed
+                ? (IsMulti ? "正在准备新局，等待安全切换…" : "正在准备新局，请稍候…")
+                : _starting
+                    ? (IsMulti ? "正在进入新局，等待其他玩家加载…" : "正在加载新局资源…")
+                    : IsDaily ? "正在重建每日挑战…" : "正在创建新种子对局…";
+            _ui.ShowLoading(status, _currentQuote);
             return;
         }
         if (!_request.Votes.Contains(_net!.NetId) && _request.Initiator != _net.NetId)
@@ -554,7 +584,7 @@ internal sealed class RestartController
             _ = PromptForVoteAsync(_request.RequestId);
             return;
         }
-        string text = $"请求以新随机种子重开\n同意 {_request.Votes.Length}/{_request.Members.Length}　剩余 {Math.Max(0, (int)(_deadline - Now).TotalSeconds)} 秒\n" +
+        string text = $"{(IsDaily ? "请求以当日固定种子重开" : "请求以新随机种子重开")}\n同意 {_request.Votes.Length}/{_request.Members.Length}　剩余 {Math.Max(0, (int)(_deadline - Now).TotalSeconds)} 秒\n" +
             string.Join("　", _request.Members.Select((id, i) => $"玩家{i + 1}：{(_request.Votes.Contains(id) ? "同意" : "等待")}"));
         if (_request.Initiator == _net!.NetId) _ui.Show("vote-own", text, ("取消请求", () => Abort("发起人取消了重开")));
         else if (_request.Votes.Contains(_net.NetId)) _ui.Show("vote-wait", text, ("拒绝并取消", () => Vote(false)));

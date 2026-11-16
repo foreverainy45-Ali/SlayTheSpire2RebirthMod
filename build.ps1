@@ -17,11 +17,14 @@ if ($LASTEXITCODE -ne 0) { throw 'Mod build failed' }
 if ($LASTEXITCODE -ne 0) { throw 'Protocol tests failed' }
 $package = Join-Path $PSScriptRoot 'dist\SeedRestart'
 New-Item -ItemType Directory -Path $package -Force | Out-Null
+$obsoleteQuoteConfig = Join-Path $package 'SeedRestart.quotes.json'
+if (Test-Path -LiteralPath $obsoleteQuoteConfig) { Remove-Item -LiteralPath $obsoleteQuoteConfig -Force }
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'src\SeedRestart\bin\Release\net9.0\SeedRestart.dll') -Destination $package -Force
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'src\SeedRestart\SeedRestart.json') -Destination $package -Force
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'src\SeedRestart\SeedRestart.quotes.cfg') -Destination $package -Force
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'README.md') -Destination $package -Force
 $packageDocs=Join-Path $package 'docs'
 New-Item -ItemType Directory -Path $packageDocs -Force | Out-Null
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'docs\验证记录.md') -Destination $packageDocs -Force
-Compress-Archive -LiteralPath $package -DestinationPath (Join-Path $PSScriptRoot 'dist\SeedRestart-0.2.1.zip') -Force
+Compress-Archive -LiteralPath $package -DestinationPath (Join-Path $PSScriptRoot 'dist\SeedRestart-0.4.0.zip') -Force
 Write-Output "Package: $package"

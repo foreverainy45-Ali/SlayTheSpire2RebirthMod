@@ -1,17 +1,19 @@
 #if RUNTIME_PROBE
+using System.Reflection;
 using System.Text.Json;
 using Godot;
 using HarmonyLib;
 using JmcModLib.Prefabs;
 using JmcModLib.UI.PauseMenu;
 using MegaCrit.Sts2.Core.Context;
+using MegaCrit.Sts2.Core.Daily;
 using MegaCrit.Sts2.Core.Entities.Players;
 using MegaCrit.Sts2.Core.Logging;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Models.Characters;
+using MegaCrit.Sts2.Core.Multiplayer.Game.Lobby;
 using MegaCrit.Sts2.Core.Nodes;
 using MegaCrit.Sts2.Core.Nodes.CommonUi;
-using MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect;
 using MegaCrit.Sts2.Core.Runs;
 using MegaCrit.Sts2.Core.Saves;
 using MegaCrit.Sts2.Core.Unlocks;
@@ -49,14 +51,33 @@ internal static class RuntimeProbe
         try
         {
             await game.GameStartupComplete;
+            var requestedGameMode = Enum.TryParse<GameMode>(System.Environment.GetEnvironmentVariable("SEEDRESTART_PROBE_GAME_MODE"), out var probeMode)
+                ? probeMode : GameMode.Standard;
+            string? requiredEpoch = requestedGameMode switch
+            {
+                GameMode.Daily => "DAILY_RUN_EPOCH",
+                GameMode.Blitz => "BLITZ_EPOCH",
+                _ => null
+            };
+            if (requiredEpoch != null && !SaveManager.Instance.Progress.Epochs.Any(e => e.Id == requiredEpoch && e.State == EpochState.Revealed))
+            {
+                SaveManager.Instance.Progress.ObtainEpochOverride(requiredEpoch, EpochState.Revealed);
+                SaveManager.Instance.SaveProgressFile();
+                Log.Info("[SeedRestart.Probe] Granted isolated test epoch " + requiredEpoch + ".");
+            }
             NModalContainer.Instance?.Clear();
             SaveManager.Instance.SetFtuesEnabled(false);
             var mode = System.Environment.GetEnvironmentVariable("SEEDRESTART_PROBE_MODE") ?? "single";
             int expectedPlayers = int.TryParse(System.Environment.GetEnvironmentVariable("SEEDRESTART_PROBE_PLAYERS"), out int expected) ? expected : 2;
             if (mode == "single")
             {
+                var requestedMode = requestedGameMode;
+                DateTimeOffset? dailyTime = requestedMode == GameMode.Daily ? DateTimeOffset.UtcNow : null;
+                string seed = requestedMode == GameMode.Daily
+                    ? DailyRunUtility.GetDailySeed(dailyTime!.Value, 1)
+                    : requestedMode == GameMode.Blitz ? "BLITZTEST1" : "SEEDTEST1";
                 await game.StartNewSingleplayerRun(Player.CreateForNewRun<Ironclad>(UnlockState.all, 1), true,
-                    ActModel.GetDefaultList(), [], "SEEDTEST1", GameMode.Standard, false, 0);
+                    ActModel.GetDefaultList(), [], seed, requestedMode, false, 0, dailyTime);
             }
             long serial = 0;
             int frame = 0;
@@ -67,9 +88,12 @@ internal static class RuntimeProbe
                 EnsureQuickSlAutoApprovalIfAvailable();
                 if (mode != "single" && RunManager.Instance.DebugOnlyGetState() == null)
                 {
-                    foreach (var screen in game.FindChildren("*", "", true, false).OfType<NCharacterSelectScreen>())
+                    foreach (var node in game.FindChildren("*", "", true, false))
                     {
-                        var lobby = screen.Lobby;
+                        const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+                        var type = node.GetType();
+                        var lobby = type.GetProperty("Lobby", flags)?.GetValue(node) as StartRunLobby
+                            ?? type.GetField("_lobby", flags)?.GetValue(node) as StartRunLobby;
                         if (lobby == null || lobby.Players.Count < expectedPlayers) continue;
                         for (int i = 0; i < lobby.Players.Count; i++)
                         {
@@ -80,6 +104,7 @@ internal static class RuntimeProbe
                         var character = mode == "host" ? (CharacterModel)ModelDb.Character<Ironclad>() : ModelDb.Character<Silent>();
                         if (lobby.LocalPlayer.character.Id != character.Id) lobby.SetLocalCharacter(character, false);
                         if (!lobby.LocalPlayer.isReady) lobby.SetReady(true);
+                        break;
                     }
                 }
                 var manager = RunManager.Instance;
@@ -142,10 +167,18 @@ internal static class RuntimeProbe
                 {
                     time = DateTimeOffset.UtcNow, serial,
                     seed = state?.Rng.StringSeed, room = state?.CurrentRoom?.GetType().Name,
+                    gameMode = state?.GameMode.ToString(), ascension = state?.AscensionLevel,
+                    acts = state?.Acts.Select(a => a.Id.ToString()),
+                    modifiers = state?.Modifiers.Select(m => m.ToSerializable()),
+                    dailyTime = manager.DailyTime, totalFloor = state?.TotalFloor,
+                    startedWithNeow = state?.ExtraFields.StartedWithNeow,
                     players = state?.Players.Select(p => new { id = p.NetId, character = p.Character.Id.ToString() }),
                     netType = manager.NetService?.Type.ToString(), connected = manager.NetService?.IsConnected,
                     netIdentity = manager.NetService == null ? 0 : System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(manager.NetService),
                     request, committed = controller.IsCommitted,
+                    nativeLoadingOpen = controller.NativeLoadingOpen,
+                    loadingStatus = controller.LoadingStatus,
+                    loadingQuote = controller.LoadingQuote,
                     preparing = AccessTools.Field(typeof(RestartController), "_preparing").GetValue(controller),
                     failed = AccessTools.Field(typeof(RestartController), "_failedAfterCommit").GetValue(controller),
                     userDir = OS.GetUserDataDir(), isChangingRooms = manager.IsChangingRooms,

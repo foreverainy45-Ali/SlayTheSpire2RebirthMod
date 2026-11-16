@@ -47,4 +47,32 @@ b = New(1, 2);
 Check(!b.Vote("request", 2, true, now.AddSeconds(30)), "late consent rejected without relying on timer tick");
 b.Cancel("QuickSL started");
 Check(!b.BeginPrepare("new", "old", now), "SL cancellation prevents subsequent restart commit");
+
+b = New(1, 2);
+b.Vote("request", 2, true, now);
+Check(b.BeginPrepare("daily", "daily", now, allowSameSeed: true), "daily restart accepts its fixed seed");
+Check(b.NewSeed == "daily" && b.Phase == RestartPhase.Preparing, "daily fixed seed enters preparation");
+
+var quotes = QuoteCatalog.Parse("""{"version":1,"quotes":[" A ","B","A","",null]}""");
+Check(quotes.Error == null && quotes.Count == 2 && quotes.Quotes.SequenceEqual(["A", "B"]),
+    "quote config trims blanks and removes duplicates");
+string? previous = null;
+bool quoteSequenceValid = true;
+for (int i = 0; i < 50; i++)
+{
+    string? current = quotes.Next();
+    quoteSequenceValid &= current is "A" or "B" && current != previous;
+    previous = current;
+}
+Check(quoteSequenceValid, "quote selection avoids immediate repeats without game RNG");
+Check(QuoteCatalog.Parse("{broken").Error != null, "invalid quote JSON fails safely");
+
+string quoteConfigPath = Path.Combine(Directory.GetCurrentDirectory(), "src", "SeedRestart", "SeedRestart.quotes.cfg");
+var releaseQuotes = QuoteCatalog.Load(quoteConfigPath);
+Check(releaseQuotes.Error == null && releaseQuotes.Count == 20, "release quote config contains approved 20 entries");
+Check(releaseQuotes.Quotes.Contains("我说删牌大于一切有没有懂的") &&
+      releaseQuotes.Quotes.Contains("体验过双飞身踢打无实体天罚吗？") &&
+      !releaseQuotes.Quotes.Contains("删牌大于一切") &&
+      !releaseQuotes.Quotes.Contains("双飞身踢打无实体天罚是对的"),
+    "release quote config contains the approved rewrites");
 Console.WriteLine($"{passed} checks passed.");

@@ -33,8 +33,11 @@ foreach ($id in @('3747526103','3747539544','3747533700')) {
 }
 $testMod = Join-Path $testMods 'SeedRestart'
 New-Item -ItemType Directory -Path $testMod -Force | Out-Null
+$obsoleteQuoteConfig = Join-Path $testMod 'SeedRestart.quotes.json'
+if (Test-Path -LiteralPath $obsoleteQuoteConfig) { Remove-Item -LiteralPath $obsoleteQuoteConfig -Force }
 Copy-Item -LiteralPath (Join-Path $workspace '.work\probe-build\SeedRestart.dll') -Destination $testMod -Force
 Copy-Item -LiteralPath (Join-Path $workspace 'src\SeedRestart\SeedRestart.json') -Destination $testMod -Force
+Copy-Item -LiteralPath (Join-Path $workspace 'src\SeedRestart\SeedRestart.quotes.cfg') -Destination $testMod -Force
 $probe=Join-Path $workspace ".work\probe\$Mode"
 New-Item -ItemType Directory -Path $probe -Force | Out-Null
 [System.IO.File]::WriteAllText((Join-Path $probe 'command.json'),'{"id":0,"operation":"noop"}')

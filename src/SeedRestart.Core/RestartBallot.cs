@@ -42,10 +42,10 @@ public sealed class RestartBallot
         return _votes.Add(sender);
     }
 
-    public bool BeginPrepare(string seed, string oldSeed, DateTimeOffset now)
+    public bool BeginPrepare(string seed, string oldSeed, DateTimeOffset now, bool allowSameSeed = false)
     {
         if (Phase != RestartPhase.Voting || now >= Deadline || !_votes.SetEquals(_members)) return false;
-        if (string.IsNullOrWhiteSpace(seed) || seed == oldSeed) return false;
+        if (string.IsNullOrWhiteSpace(seed) || (!allowSameSeed && seed == oldSeed)) return false;
         NewSeed = seed;
         Phase = RestartPhase.Preparing;
         Deadline = now.AddSeconds(15);

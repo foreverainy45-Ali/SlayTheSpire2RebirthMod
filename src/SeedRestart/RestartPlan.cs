@@ -12,7 +12,8 @@ using MegaCrit.Sts2.Core.Saves;
 
 namespace SeedRestart;
 
-internal sealed record RestartPlan(RunState OldState, RunState NewState, List<StartRunLobbyPlayer> LobbyPlayers, bool ShouldSave)
+internal sealed record RestartPlan(RunState OldState, RunState NewState, List<StartRunLobbyPlayer> LobbyPlayers,
+    bool ShouldSave, DateTimeOffset? DailyTime)
 {
     public static string Token(RunState? state)
     {
@@ -34,9 +35,21 @@ internal sealed record RestartPlan(RunState OldState, RunState NewState, List<St
         ActModel.GetRandomList(new Rng(StringHelper.GetDeterministicHashCode(seed), "act_selection"), state.UnlockState, multiplayer)
             .Select(a => a.Id.ToString()).ToArray();
 
+    public static string[] ActsForRestart(RunState state, string seed, bool multiplayer) =>
+        state.GameMode == GameMode.Daily
+            ? state.Acts.Select(a => a.Id.ToString()).ToArray()
+            : PickActs(state, seed, multiplayer);
+
     public static RestartPlan Create(RunState old, string seed, string[] acts)
     {
-        if (seed == old.Rng.StringSeed || string.IsNullOrWhiteSpace(seed)) throw new InvalidOperationException("必须使用新种子");
+        bool daily = old.GameMode == GameMode.Daily;
+        if (string.IsNullOrWhiteSpace(seed) || (daily ? seed != old.Rng.StringSeed : seed == old.Rng.StringSeed))
+            throw new InvalidOperationException(daily ? "每日挑战必须保留当日固定种子" : "该模式必须使用新种子");
+        if (daily && !acts.SequenceEqual(old.Acts.Select(a => a.Id.ToString())))
+            throw new InvalidOperationException("每日挑战必须保留固定幕列表");
+        var dailyTime = RunManager.Instance.DailyTime;
+        if (daily && !dailyTime.HasValue)
+            throw new InvalidOperationException("每日挑战时间信息缺失，已阻止重开");
         var players = old.Players.Select(p => Player.CreateForNewRun(ModelDb.GetById<CharacterModel>(p.Character.Id), p.UnlockState, p.NetId)).ToList();
         var actModels = acts.Select(id => ModelDb.GetById<ActModel>(ModelId.Deserialize(id)).ToMutable()).ToList();
         var modifiers = old.Modifiers.Select(m => ModifierModel.FromSerializable(m.ToSerializable())).ToList();
@@ -47,7 +60,7 @@ internal sealed record RestartPlan(RunState OldState, RunState NewState, List<St
             unlockState = p.UnlockState.ToSerializable(), isModded = true, isReady = true,
             maxStandardAscension = old.AscensionLevel, maxBlitzAscension = old.AscensionLevel
         }).ToList();
-        return new(old, state, lobby, RunManager.Instance.ShouldSave);
+        return new(old, state, lobby, RunManager.Instance.ShouldSave, dailyTime);
     }
 
     public static string WriteRecovery(bool multiplayer, ulong localId, string requestId)
