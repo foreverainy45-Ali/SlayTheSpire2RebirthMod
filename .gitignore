@@ -1,0 +1,12 @@
+.tools/
+bin/
+obj/
+dist/
+.work/
+*.user
+*.log
+*.run
+.vs/
+.idea/
+.vscode/
+TestResults/

@@ -1,0 +1,17 @@
+{
+  "id": "SeedRestart",
+  "name": "快速换种重开 / Seed Restart",
+  "author": "Foreverain",
+  "version": "0.2.1",
+  "description": "结束当前对局并记为失败，保留角色、难度和联机房间，以新随机种子回到涅奥。",
+  "has_pck": false,
+  "has_dll": true,
+  "affects_gameplay": true,
+  "min_game_version": "0.113.1",
+  "dependencies": [
+    {
+      "id": "JmcModLib",
+      "min_version": "1.10.0"
+    }
+  ]
+}
