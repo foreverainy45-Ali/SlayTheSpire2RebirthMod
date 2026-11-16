@@ -126,14 +126,14 @@ internal sealed class RestartController
     {
         var manager = RunManager.Instance;
         var state = manager.DebugOnlyGetState();
-        if (state == null || manager.HasRunEnded || manager.IsCleaningUp || _net == null) return "当前不在可重开的对局中";
+        if (state == null || GameCompatibility.ManagerFlag(manager, "HasRunEnded") || manager.IsCleaningUp || _net == null) return "当前不在可重开的对局中";
         if (!_sl.Supported) return "当前 QuickSL 版本尚未适配；为保留其功能，换种重开已停用";
         if (_sl.IsBusy) return "快速 SL 正在审批或加载，请完成后再请求换种";
-        if (state.GameMode is not (GameMode.Standard or GameMode.Daily or GameMode.Blitz))
+        if (!GameCompatibility.IsSupportedMode(state.GameMode))
             return "当前仅支持普通模式、每日挑战和 Blitz";
         if (state.Modifiers.Any(m => m.GetType().Assembly != typeof(RunState).Assembly)) return "当前自定义修正项尚未验证兼容";
         if (state.Players.Count is < 1 or > 4 || _net.Type is not (NetGameType.Singleplayer or NetGameType.Host or NetGameType.Client)) return "当前联机模式不受支持";
-        if (manager.IsChangingRooms || _game.Transition.InTransition || _net.IsGameLoading) return "正在切换场景，请稍后重试";
+        if (GameCompatibility.ManagerFlag(manager, "IsChangingRooms") || _game.Transition.InTransition || _net.IsGameLoading) return "正在切换场景，请稍后重试";
         if (IsMulti && !state.Players.Select(p => p.NetId).ToHashSet().SetEquals(CurrentMembers())) return "请等待所有原对局玩家连接完成";
         return null;
     }
@@ -142,7 +142,7 @@ internal sealed class RestartController
     {
         if (!IsMulti) return [_net!.NetId];
         if (_net is INetHostGameService host) return host.ConnectedPeers.Select(p => p.peerId).Append(_net.NetId).Order().ToArray();
-        return RunManager.Instance.RunLobby?.Players.Select(p => p.id).Order().ToArray() ?? [_net!.NetId];
+        return RunManager.Instance.DebugOnlyGetState()?.Players.Select(p => p.NetId).Order().ToArray() ?? [_net!.NetId];
     }
 
     private void SendRequest()
@@ -375,14 +375,14 @@ internal sealed class RestartController
         _preparing = true;
         _currentQuote ??= _quotes.Next();
         _deadline = Now.AddSeconds(15);
-        _plan = RestartPlan.Create(_observedState!, _request!.Seed, _request.Acts);
+        _plan = RestartPlan.Create(_observedState!, _request!.Seed, _request.Acts, IsMulti);
     }
 
     private void TryReady()
     {
         var manager = RunManager.Instance;
         var action = manager.ActionExecutor.CurrentlyRunningAction;
-        if (manager.IsChangingRooms || _game.Transition.InTransition ||
+        if (GameCompatibility.ManagerFlag(manager, "IsChangingRooms") || _game.Transition.InTransition ||
             (action != null && action.State is not (GameActionState.GatheringPlayerChoice or GameActionState.Finished or GameActionState.Canceled))) return;
         if (!_ownsPause)
         {
@@ -421,14 +421,14 @@ internal sealed class RestartController
             manager.OnEnded(false);
             // Native CleanUp does not dispose these services in v0.113.1. They would
             // otherwise leave old-run listeners on a connection that is being reused.
-            manager.MerchantSynchronizer.Dispose();
-            manager.EventSynchronizer.Dispose();
-            manager.OneOffSynchronizer.Dispose();
-            manager.CombatStateSynchronizer.Dispose();
-            manager.InputSynchronizer.Dispose();
+            GameCompatibility.DisposeSynchronizerIfPresent(manager, "MerchantSynchronizer");
+            GameCompatibility.DisposeSynchronizerIfPresent(manager, "EventSynchronizer");
+            GameCompatibility.DisposeSynchronizerIfPresent(manager, "OneOffSynchronizer");
+            GameCompatibility.DisposeSynchronizerIfPresent(manager, "CombatStateSynchronizer");
+            GameCompatibility.DisposeSynchronizerIfPresent(manager, "InputSynchronizer");
             // All synchronous cleanup executes against a forwarding facade. No network
             // service/global disconnect patches are installed, so QuickSL keeps its own path.
-            RestartPlan.SetNetService(new PreservedConnection(_net));
+            RestartPlan.SetNetService(PreservedConnection.Create(_net));
             try { manager.CleanUp(false); }
             finally { RestartPlan.SetNetService(_net); }
             _game.RootSceneContainer.SetCurrentScene(new Control());
@@ -437,16 +437,17 @@ internal sealed class RestartController
             if (!_net.IsConnected || lobby != _net.GetRawLobbyIdentifier()) throw new InvalidOperationException("联机会话未保持");
             if (IsMulti)
             {
-                var hidden = new StartRunLobby(_plan!.NewState.GameMode, _plan.NewState.IsCustomGame, _net, new PassiveLobby(), 4);
-                hidden.Players.AddRange(_plan.LobbyPlayers);
+                var plan = _plan ?? throw new InvalidOperationException("重开计划已丢失");
+                var hidden = GameCompatibility.CreateHiddenLobby(plan, _net);
                 // Removes temporary lobby listeners without disconnecting or disposing input sync.
                 hidden.CleanUp(false);
-                manager.SetUpNewMultiplayer(_plan.NewState, hidden, _plan.ShouldSave, _plan.DailyTime);
+                manager.SetUpNewMultiplayer(plan.NewState, hidden, plan.ShouldSave, plan.DailyTime);
             }
-            else manager.SetUpNewSingleplayer(_plan!.NewState, _plan.ShouldSave, _plan.DailyTime);
+            else if (!GameCompatibility.IsOfficial107)
+                manager.SetUpNewSingleplayer(_plan!.NewState, _plan.ShouldSave, _plan.DailyTime);
             // A reroll explicitly returns to Neow even for a profile still in the initial tutorial.
             // This does not change long-term unlocks or grant any opening reward automatically.
-            _plan!.NewState.ExtraFields.StartedWithNeow = true;
+            if (!GameCompatibility.IsOfficial107 || IsMulti) _plan!.NewState.ExtraFields.StartedWithNeow = true;
             _setup.Add(_net.NetId);
             if (!IsHost) Send(Message(MessageKind.SetupReady));
         }
@@ -465,9 +466,15 @@ internal sealed class RestartController
     {
         try
         {
-            var start = AccessTools.Method(typeof(NGame), "StartRun", [typeof(RunState)])
-                ?? throw new MissingMethodException("NGame.StartRun");
-            await (Task)start.Invoke(_game, [_plan!.NewState])!;
+            var plan = _plan ?? throw new InvalidOperationException("重开计划已丢失");
+            if (GameCompatibility.IsOfficial107 && !IsMulti)
+                _plan = plan with { NewState = await GameCompatibility.StartOfficialSingleplayer(_game, plan) };
+            else
+            {
+                var start = AccessTools.Method(typeof(NGame), "StartRun", [typeof(RunState)])
+                    ?? throw new MissingMethodException("NGame.StartRun");
+                await (Task)start.Invoke(_game, [plan.NewState])!;
+            }
             if (_failedAfterCommit) return;
             RunManager.Instance.ActionExecutor.Pause();
             CombatManager.Instance.Pause();
@@ -591,20 +598,6 @@ internal sealed class RestartController
         if (_request.Initiator == _net!.NetId) _ui.Show("vote-own", text, ("取消请求", () => Abort("发起人取消了重开")));
         else if (_request.Votes.Contains(_net.NetId)) _ui.Show("vote-wait", text, ("拒绝并取消", () => Vote(false)));
         else _ui.Show("vote", text, ("同意", () => Vote(true)), ("拒绝", () => Vote(false)));
-    }
-
-    private sealed class PassiveLobby : IStartRunLobbyListener
-    {
-        public void PlayerConnected(StartRunLobbyPlayer p) { }
-        public void PlayerChanged(StartRunLobbyPlayer p) { }
-        public void AscensionChanged() { }
-        public void SeedChanged() { }
-        public void ModifiersChanged() { }
-        public void GameModeChanged() { }
-        public void MaxAscensionChanged() { }
-        public void RemotePlayerDisconnected(StartRunLobbyPlayer p) { }
-        public void BeginRun(string seed, List<MegaCrit.Sts2.Core.Models.ActModel> acts, IReadOnlyList<MegaCrit.Sts2.Core.Models.ModifierModel> modifiers) { }
-        public void LocalPlayerDisconnected(NetErrorInfo info) { }
     }
 
     [HarmonyPatch(typeof(NetMessageBus), nameof(NetMessageBus.SendMessageToAllHandlers))]

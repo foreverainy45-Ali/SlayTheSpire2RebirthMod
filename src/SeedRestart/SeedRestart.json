@@ -2,12 +2,12 @@
   "id": "SeedRestart",
   "name": "快速换种重开 / Seed Restart",
   "author": "Foreverain",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "失败结算后快速重开；支持普通、每日与Blitz，并提供原生加载提示和可配置农神语录。",
   "has_pck": false,
   "has_dll": true,
   "affects_gameplay": true,
-  "min_game_version": "0.113.1",
+  "min_game_version": "0.107.1",
   "dependencies": [
     {
       "id": "JmcModLib",

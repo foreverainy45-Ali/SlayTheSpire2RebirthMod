@@ -2,12 +2,14 @@ param(
     [ValidateSet('single','host','client','client2','client3')][string]$Mode='single',
     [ValidateSet('Standard','Daily','Blitz')][string]$GameMode='Standard',
     [switch]$Windowed,
+    [switch]$Official,
     [ValidateRange(2,4)][int]$Players=2
 )
 $ErrorActionPreference='Stop'
 $workspace=[System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
-$testGame=Join-Path $workspace ".work\games\$Mode"
-$probe=Join-Path $workspace ".work\probe\$Mode"
+$testKey=if($Official){"official-$Mode"}else{$Mode}
+$testGame=Join-Path $workspace ".work\games\$testKey"
+$probe=Join-Path $workspace ".work\probe\$testKey"
 New-Item -ItemType Directory -Path $probe -Force | Out-Null
 [System.IO.File]::WriteAllText((Join-Path $probe 'command.json'),'{"id":0,"operation":"noop"}')
 $staleError=Join-Path $probe 'error.txt'

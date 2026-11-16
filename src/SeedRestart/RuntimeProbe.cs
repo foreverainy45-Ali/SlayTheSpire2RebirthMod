@@ -50,13 +50,15 @@ internal static class RuntimeProbe
     {
         try
         {
-            await game.GameStartupComplete;
+            var startup = AccessTools.Property(typeof(NGame), "GameStartupComplete")?.GetValue(game) as Task;
+            if (startup != null) await startup;
+            else for (int i = 0; i < 60; i++) await game.ToSignal(game.GetTree(), SceneTree.SignalName.ProcessFrame);
             var requestedGameMode = Enum.TryParse<GameMode>(System.Environment.GetEnvironmentVariable("SEEDRESTART_PROBE_GAME_MODE"), out var probeMode)
                 ? probeMode : GameMode.Standard;
-            string? requiredEpoch = requestedGameMode switch
+            string? requiredEpoch = requestedGameMode.ToString() switch
             {
-                GameMode.Daily => "DAILY_RUN_EPOCH",
-                GameMode.Blitz => "BLITZ_EPOCH",
+                "Daily" => "DAILY_RUN_EPOCH",
+                "Blitz" => "BLITZ_EPOCH",
                 _ => null
             };
             if (requiredEpoch != null && !SaveManager.Instance.Progress.Epochs.Any(e => e.Id == requiredEpoch && e.State == EpochState.Revealed))
@@ -74,10 +76,9 @@ internal static class RuntimeProbe
                 var requestedMode = requestedGameMode;
                 DateTimeOffset? dailyTime = requestedMode == GameMode.Daily ? DateTimeOffset.UtcNow : null;
                 string seed = requestedMode == GameMode.Daily
-                    ? DailyRunUtility.GetDailySeed(dailyTime!.Value, 1)
-                    : requestedMode == GameMode.Blitz ? "BLITZTEST1" : "SEEDTEST1";
-                await game.StartNewSingleplayerRun(Player.CreateForNewRun<Ironclad>(UnlockState.all, 1), true,
-                    ActModel.GetDefaultList(), [], seed, requestedMode, false, 0, dailyTime);
+                    ? GetDailySeed(dailyTime!.Value)
+                    : requestedMode.ToString() == "Blitz" ? "BLITZTEST1" : "SEEDTEST1";
+                await StartTestRun(game, seed, requestedMode, dailyTime);
             }
             long serial = 0;
             int frame = 0;
@@ -102,7 +103,12 @@ internal static class RuntimeProbe
                             lobby.Players[i] = entry;
                         }
                         var character = mode == "host" ? (CharacterModel)ModelDb.Character<Ironclad>() : ModelDb.Character<Silent>();
-                        if (lobby.LocalPlayer.character.Id != character.Id) lobby.SetLocalCharacter(character, false);
+                        if (lobby.LocalPlayer.character.Id != character.Id)
+                        {
+                            var setCharacter = AccessTools.Method(typeof(StartRunLobby), "SetLocalCharacter")!;
+                            setCharacter.Invoke(lobby, setCharacter.GetParameters().Length == 2
+                                ? [character, false] : [character]);
+                        }
                         if (!lobby.LocalPlayer.isReady) lobby.SetReady(true);
                         break;
                     }
@@ -187,7 +193,7 @@ internal static class RuntimeProbe
                     quoteBottomCentered = controller.QuoteBottomCentered,
                     preparing = AccessTools.Field(typeof(RestartController), "_preparing").GetValue(controller),
                     failed = AccessTools.Field(typeof(RestartController), "_failedAfterCommit").GetValue(controller),
-                    userDir = OS.GetUserDataDir(), isChangingRooms = manager.IsChangingRooms,
+                    userDir = OS.GetUserDataDir(), isChangingRooms = GameCompatibility.ManagerFlag(manager, "IsChangingRooms"),
                     slBusy = new QuickSlCompatibilityView(controller).Busy,
                     pauseMenuButtonRegistered = PauseMenuRegistry.GetEntries(typeof(RestartMenu).Assembly)
                         .Any(e => e.Key == "seed_restart.pause_menu.rebirth"),
@@ -208,6 +214,25 @@ internal static class RuntimeProbe
     {
         __result = Task.FromResult(true);
         return false;
+    }
+
+    private static string GetDailySeed(DateTimeOffset time)
+    {
+        var method = AccessTools.Method(typeof(DailyRunUtility), "GetDailySeed");
+        return method == null ? time.ToString("dd_MM_yyyy") + "_1P" : (string)method.Invoke(null, [time, 1])!;
+    }
+
+    private static async Task StartTestRun(NGame game, string seed, GameMode mode, DateTimeOffset? dailyTime)
+    {
+        var method = typeof(NGame).GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+            .Single(m => m.Name == "StartNewSingleplayerRun");
+        object first = method.GetParameters()[0].ParameterType == typeof(CharacterModel)
+            ? ModelDb.Character<Ironclad>()
+            : Player.CreateForNewRun<Ironclad>(UnlockState.all, 1);
+        object?[] args = method.GetParameters().Length == 9
+            ? [first, true, ActModel.GetDefaultList(), Array.Empty<ModifierModel>(), seed, mode, false, 0, dailyTime]
+            : [first, true, ActModel.GetDefaultList(), Array.Empty<ModifierModel>(), seed, mode, 0, dailyTime];
+        await (Task)method.Invoke(game, args)!;
     }
 
     private static bool _quickSlAutoApprovalInstalled;
