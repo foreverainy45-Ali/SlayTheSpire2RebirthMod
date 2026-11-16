@@ -418,7 +418,7 @@ internal sealed class RestartController
             // A reroll is a real loss, not an unrecorded reset or an abandoned-history entry.
             // OnEnded(false) synchronously updates progress, creates run history and deletes
             // the old autosave before the fresh seed is installed.
-            manager.OnEnded(false);
+            GameCompatibility.EndRunAsLoss(manager);
             // Native CleanUp does not dispose these services in v0.113.1. They would
             // otherwise leave old-run listeners on a connection that is being reused.
             GameCompatibility.DisposeSynchronizerIfPresent(manager, "MerchantSynchronizer");

@@ -61,6 +61,13 @@ internal static class GameCompatibility
         AccessTools.Method(value.GetType(), nameof(IDisposable.Dispose))?.Invoke(value, null);
     }
 
+    public static void EndRunAsLoss(RunManager manager)
+    {
+        var method = AccessTools.Method(typeof(RunManager), "OnEnded", [typeof(bool)])
+            ?? throw new MissingMethodException("RunManager.OnEnded(bool)");
+        method.Invoke(manager, [false]);
+    }
+
     public static bool IsCustomGame(RunState state) =>
         (bool?)AccessTools.Property(typeof(RunState), "IsCustomGame")?.GetValue(state) ?? state.GameMode.ToString() == "Custom";
 
