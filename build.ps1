@@ -26,5 +26,5 @@ Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'README.md') -Destination $packa
 $packageDocs=Join-Path $package 'docs'
 New-Item -ItemType Directory -Path $packageDocs -Force | Out-Null
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'docs\验证记录.md') -Destination $packageDocs -Force
-Compress-Archive -LiteralPath $package -DestinationPath (Join-Path $PSScriptRoot 'dist\SeedRestart-0.4.0.zip') -Force
+Compress-Archive -LiteralPath $package -DestinationPath (Join-Path $PSScriptRoot 'dist\SeedRestart-0.4.1.zip') -Force
 Write-Output "Package: $package"

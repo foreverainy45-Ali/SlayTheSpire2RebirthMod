@@ -1,6 +1,9 @@
 using Godot;
-using JmcModLib.Prefabs;
+using HarmonyLib;
+using MegaCrit.Sts2.addons.mega_text;
 using MegaCrit.Sts2.Core.Logging;
+using MegaCrit.Sts2.Core.Nodes.CommonUi;
+using MegaCrit.Sts2.Core.Nodes.Multiplayer;
 
 namespace SeedRestart;
 
@@ -8,21 +11,33 @@ internal sealed class RestartUi
 {
     private readonly Node _owner;
     private CanvasLayer? _layer;
+    private CanvasLayer? _loadingLayer;
     private Label? _text;
-    private JmcReportPopupHandle? _loadingPopup;
+    private NGenericPopup? _loadingPopup;
+    private NVerticalPopup? _loadingPanel;
+    private MegaRichTextLabel? _quoteLabel;
     private string _key = "";
     internal bool NativeLoadingOpen
     {
         get
         {
-            try { return _loadingPopup is { IsOpen: true }; }
+            try
+            {
+                return GodotObject.IsInstanceValid(_loadingLayer) && _loadingLayer!.IsInsideTree() &&
+                    GodotObject.IsInstanceValid(_loadingPopup) && _loadingPopup!.IsInsideTree();
+            }
             catch (ObjectDisposedException) { return false; }
         }
     }
     internal string? LoadingStatus { get; private set; }
     internal string? LoadingQuote { get; private set; }
+    internal string? RenderedQuote => GodotObject.IsInstanceValid(_quoteLabel) ? _quoteLabel!.Text : null;
+    internal bool QuoteBottomCentered => GodotObject.IsInstanceValid(_quoteLabel) &&
+        _quoteLabel!.HorizontalAlignment == HorizontalAlignment.Center &&
+        _quoteLabel.VerticalAlignment == VerticalAlignment.Center &&
+        _quoteLabel.AnchorTop >= 0.7f && _quoteLabel.AnchorBottom <= 0.91f;
 
-    // Use plain engine controls; no PCK, custom scenes, fonts or native popup windows required.
+    // Reuse the game's popup scene and fonts; the mod ships no PCK or copied game assets.
     public RestartUi(Node owner) => _owner = owner;
     public void Show(string key, string text, params (string Label, Action Action)[] actions)
     {
@@ -34,15 +49,15 @@ internal sealed class RestartUi
     {
         LoadingStatus = status;
         LoadingQuote = quote;
-        string body = string.IsNullOrWhiteSpace(quote)
+        string fallbackBody = string.IsNullOrWhiteSpace(quote)
             ? status
-            : $"{status}\n\n农神语录：{quote}";
+            : $"{status}\n\n{quote}";
         try
         {
-            if (_loadingPopup is { IsOpen: true })
+            if (NativeLoadingOpen && GodotObject.IsInstanceValid(_loadingPanel))
             {
-                _loadingPopup.SetBody(body, JmcReportPopupBodyFormat.PlainText);
-                _loadingPopup.SetStatus("请稍候");
+                _loadingPanel!.SetText("Rebirth · 快速重开", status);
+                if (GodotObject.IsInstanceValid(_quoteLabel)) _quoteLabel!.Text = quote ?? "";
                 CloseOverlay();
                 return;
             }
@@ -50,42 +65,27 @@ internal sealed class RestartUi
         catch (ObjectDisposedException)
         {
             // Scene teardown can dispose the native view before its handle observes closure.
-            _loadingPopup = null;
         }
         catch (InvalidOperationException e)
         {
             Log.Warn("[SeedRestart] Native loading popup could not be updated; reopening or using fallback: " + e.Message);
-            _loadingPopup = null;
         }
-        _loadingPopup = null;
+        CloseNativePopup();
         try
         {
-            if (JmcReportPopup.IsAvailable)
-            {
-                _loadingPopup = JmcReportPopup.Open(new JmcReportPopupOptions
-                {
-                    Title = "Rebirth · 快速重开",
-                    Body = body,
-                    Status = "请稍候",
-                    BodyFormat = JmcReportPopupBodyFormat.PlainText,
-                    Buttons = [new JmcReportPopupButton("waiting", "请稍候", _ => { }, false, false)],
-                    ShowBackstop = true,
-                    CloseOnEscape = false,
-                    MinimumSize = new Vector2(700, 300)
-                }, typeof(RestartUi).Assembly);
-            }
+            CreatePersistentLoadingPopup(status, quote);
         }
-        catch (Exception e) when (e is ObjectDisposedException or InvalidOperationException)
+        catch (Exception e)
         {
             Log.Warn("[SeedRestart] Native loading popup unavailable during scene transition; using fallback: " + e.Message);
-            _loadingPopup = null;
+            CloseNativePopup();
         }
-        if (_loadingPopup != null)
+        if (NativeLoadingOpen)
         {
             CloseOverlay();
             return;
         }
-        ShowOverlay("loading-fallback", body);
+        ShowOverlay("loading-fallback", fallbackBody);
     }
 
     private void ShowOverlay(string key, string text, params (string Label, Action Action)[] actions)
@@ -133,17 +133,93 @@ internal sealed class RestartUi
 
     private void CloseLoadingPopup()
     {
+        CloseNativePopup();
+        LoadingStatus = null;
+        LoadingQuote = null;
+    }
+
+    private static void HideWaitingButtons(NVerticalPopup panel)
+    {
+        panel.YesButton.Visible = false;
+        panel.NoButton.Visible = false;
+        panel.YesButton.FocusMode = Control.FocusModeEnum.None;
+        panel.NoButton.FocusMode = Control.FocusModeEnum.None;
+        panel.YesButton.MouseFilter = Control.MouseFilterEnum.Ignore;
+        panel.NoButton.MouseFilter = Control.MouseFilterEnum.Ignore;
+    }
+
+    private void CreatePersistentLoadingPopup(string status, string? quote)
+    {
+        // A scene-owned NModalContainer is destroyed while the run changes rooms. Keeping the
+        // native popup under NGame lets the same stone panel remain visible through that gap.
+        _loadingLayer = new CanvasLayer { Name = "SeedRestartLoading", Layer = 120 };
+        var backdrop = new ColorRect
+        {
+            Name = "Backstop",
+            Color = new Color(0, 0, 0, 0.8f),
+            MouseFilter = Control.MouseFilterEnum.Stop
+        };
+        backdrop.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
+        _loadingPopup = NGenericPopup.Create() ?? throw new InvalidOperationException("游戏原生提示框创建失败");
+        _loadingPopup.Name = "NativeStonePopup";
+        _loadingLayer.AddChild(backdrop);
+        _loadingLayer.AddChild(_loadingPopup);
+        _owner.AddChild(_loadingLayer);
+        _loadingPanel = _loadingPopup.GetNode<NVerticalPopup>("VerticalPopup");
+        _loadingPanel.SetText("Rebirth · 快速重开", status);
+        HideWaitingButtons(_loadingPanel);
+        _quoteLabel = CreateQuoteLabel(_loadingPanel, quote);
+    }
+
+    private static MegaRichTextLabel CreateQuoteLabel(NVerticalPopup panel, string? quote)
+    {
+        var bodyLabel = (MegaRichTextLabel?)AccessTools.Property(typeof(NVerticalPopup), "BodyLabel").GetValue(panel)
+            ?? throw new InvalidOperationException("游戏原生提示框正文节点不可用");
+        var label = (MegaRichTextLabel)bodyLabel.Duplicate();
+        label.Name = "SeedRestartQuote";
+        label.Text = quote ?? "";
+        label.HorizontalAlignment = HorizontalAlignment.Center;
+        label.VerticalAlignment = VerticalAlignment.Center;
+        label.AutoSizeEnabled = true;
+        label.MinFontSize = 18;
+        label.MaxFontSize = 26;
+        label.MouseFilter = Control.MouseFilterEnum.Ignore;
+        label.AnchorLeft = 0.12f;
+        label.AnchorRight = 0.88f;
+        label.AnchorTop = 0.72f;
+        label.AnchorBottom = 0.9f;
+        label.OffsetLeft = label.OffsetTop = label.OffsetRight = label.OffsetBottom = 0;
+        panel.AddChild(label);
+        return label;
+    }
+
+    private void CloseNativePopup()
+    {
         try
         {
-            if (_loadingPopup is { IsOpen: true }) _loadingPopup.Close();
+            if (GodotObject.IsInstanceValid(_loadingLayer))
+            {
+                _loadingLayer!.GetParent()?.RemoveChild(_loadingLayer);
+                _loadingLayer.QueueFree();
+            }
+            else if (GodotObject.IsInstanceValid(_loadingPopup) && _loadingPopup!.IsInsideTree())
+            {
+                _loadingPopup.QueueFree();
+            }
         }
         catch (Exception e) when (e is ObjectDisposedException or InvalidOperationException)
         {
             Log.Debug("[SeedRestart] Native loading popup was already released: " + e.Message);
         }
+        ClearNativeReferences();
+    }
+
+    private void ClearNativeReferences()
+    {
+        _loadingLayer = null;
         _loadingPopup = null;
-        LoadingStatus = null;
-        LoadingQuote = null;
+        _loadingPanel = null;
+        _quoteLabel = null;
     }
 
     private void CloseOverlay()

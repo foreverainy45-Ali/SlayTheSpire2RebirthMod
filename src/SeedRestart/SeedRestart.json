@@ -2,7 +2,7 @@
   "id": "SeedRestart",
   "name": "快速换种重开 / Seed Restart",
   "author": "Foreverain",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "失败结算后快速重开；支持普通、每日与Blitz，并提供原生加载提示和可配置农神语录。",
   "has_pck": false,
   "has_dll": true,

@@ -25,10 +25,10 @@ public static class ModEntry
             Log.Warn($"[SeedRestart] Unsupported game {version}; no patches installed.");
             return;
         }
-        ModRegistry.Register("SeedRestart", "快速换种重开 / Seed Restart", "0.4.0", Assembly.GetExecutingAssembly()).Done();
+        ModRegistry.Register("SeedRestart", "快速换种重开 / Seed Restart", "0.4.1", Assembly.GetExecutingAssembly()).Done();
         Harmony.PatchAll(Assembly.GetExecutingAssembly());
         EnsureController();
-        Log.Info("[SeedRestart] 0.4.0 loaded for public-beta v0.113.1. Native loading popup and configurable quotes enabled; QuickSL files/configuration untouched.");
+        Log.Info("[SeedRestart] 0.4.1 loaded for public-beta v0.113.1. Generic native loading popup and configurable quotes enabled; QuickSL files/configuration untouched.");
     }
 
     internal static RestartController? EnsureController(NGame? game = null)

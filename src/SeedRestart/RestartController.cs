@@ -47,6 +47,8 @@ internal sealed class RestartController
     internal bool NativeLoadingOpen => _ui.NativeLoadingOpen;
     internal string? LoadingStatus => _ui.LoadingStatus;
     internal string? LoadingQuote => _ui.LoadingQuote;
+    internal string? RenderedQuote => _ui.RenderedQuote;
+    internal bool QuoteBottomCentered => _ui.QuoteBottomCentered;
     private bool IsHost => _net?.Type is NetGameType.Host or NetGameType.Singleplayer;
     private bool IsMulti => _net?.Type is NetGameType.Host or NetGameType.Client;
     private bool IsDaily => (_observedState ?? RunManager.Instance.DebugOnlyGetState())?.GameMode == GameMode.Daily;

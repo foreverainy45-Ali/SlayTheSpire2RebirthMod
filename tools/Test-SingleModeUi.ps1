@@ -56,7 +56,8 @@ for ($round=1; $round -le $Count; $round++) {
     $null=Await-State { param($s) $s.popupOpen }
     $watch=[Diagnostics.Stopwatch]::StartNew()
     Send confirm_ui
-    $loading=Await-State { param($s) $s.request -and $s.nativeLoadingOpen -and $s.loadingQuote }
+    $loading=Await-State { param($s) $s.request -and $s.nativeLoadingOpen -and $s.loadingQuote -and
+        $s.renderedQuote -eq $s.loadingQuote -and $s.quoteBottomCentered }
     if ($loading.loadingStatus -match '其他玩家|所有玩家|全员|队友') {
         throw "Singleplayer loading text incorrectly mentions other players: $($loading.loadingStatus)"
     }

@@ -1,4 +1,4 @@
-param([ValidateSet('single','host','client','client2','client3')][string]$Mode='single', [ValidateSet('request','request_ui','confirm_ui','cancel_ui','agree','reject','cancel','sl','combat','exit')][string]$Operation)
+param([ValidateSet('single','host','client','client2','client3')][string]$Mode='single', [ValidateSet('request','request_ui','confirm_ui','cancel_ui','agree','reject','cancel','sl','combat','screenshot','exit')][string]$Operation)
 $ErrorActionPreference='Stop'
 $directory=[System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\.work\probe\$Mode"))
 $path=Join-Path $directory 'command.json'

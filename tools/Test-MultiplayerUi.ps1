@@ -70,7 +70,9 @@ for($round=1;$round -le $Count;$round++) {
     $watch=[Diagnostics.Stopwatch]::StartNew()
     Command $voter confirm_ui
     $loading=Await-Pair {param($h,$c) $h.request -and $c.request -and
-        $h.nativeLoadingOpen -and $c.nativeLoadingOpen -and $h.loadingQuote -and $c.loadingQuote}
+        $h.nativeLoadingOpen -and $c.nativeLoadingOpen -and $h.loadingQuote -and $c.loadingQuote -and
+        $h.renderedQuote -eq $h.loadingQuote -and $c.renderedQuote -eq $c.loadingQuote -and
+        $h.quoteBottomCentered -and $c.quoteBottomCentered}
     $pair=Await-Pair {param($h,$c) $h.seed -eq $c.seed -and !$h.request -and !$c.request -and
         [int]$h.historyFiles -eq ([int]$before[0].historyFiles+1) -and [int]$c.historyFiles -eq ([int]$before[1].historyFiles+1) -and
         !$h.committed -and !$c.committed -and $h.room -eq 'EventRoom' -and $c.room -eq 'EventRoom'}

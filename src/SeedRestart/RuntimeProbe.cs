@@ -159,6 +159,10 @@ internal static class RuntimeProbe
                             case "combat":
                                 _ = manager.EnterMapCoord(state!.Map.GetPointsInRow(1).First().coord);
                                 break;
+                            case "screenshot":
+                                var image = game.GetViewport().GetTexture().GetImage();
+                                image.SavePng(Path.Combine(directory, "viewport.png"));
+                                break;
                             case "exit": game.GetTree().Quit(); return;
                         }
                     }
@@ -179,6 +183,8 @@ internal static class RuntimeProbe
                     nativeLoadingOpen = controller.NativeLoadingOpen,
                     loadingStatus = controller.LoadingStatus,
                     loadingQuote = controller.LoadingQuote,
+                    renderedQuote = controller.RenderedQuote,
+                    quoteBottomCentered = controller.QuoteBottomCentered,
                     preparing = AccessTools.Field(typeof(RestartController), "_preparing").GetValue(controller),
                     failed = AccessTools.Field(typeof(RestartController), "_failedAfterCommit").GetValue(controller),
                     userDir = OS.GetUserDataDir(), isChangingRooms = manager.IsChangingRooms,
