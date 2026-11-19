@@ -142,7 +142,7 @@ internal sealed class RestartController
     private ulong[] CurrentMembers()
     {
         if (!IsMulti) return [_net!.NetId];
-        if (_net is INetHostGameService host) return host.ConnectedPeers.Select(p => p.peerId).Append(_net.NetId).Order().ToArray();
+        if (_net is INetHostGameService host) return GameCompatibility.ConnectedHostPeerIds(host).Append(_net.NetId).Order().ToArray();
         return RunManager.Instance.DebugOnlyGetState()?.Players.Select(p => p.NetId).Order().ToArray() ?? [_net!.NetId];
     }
 
@@ -454,13 +454,13 @@ internal sealed class RestartController
                 hidden.CleanUp(false);
                 manager.SetUpNewMultiplayer(plan.NewState, hidden, plan.ShouldSave, plan.DailyTime);
             }
-            else if (!GameCompatibility.IsOfficial107)
+            else if (!GameCompatibility.UsesNativeSingleplayerStart)
                 manager.SetUpNewSingleplayer(_plan!.NewState, _plan.ShouldSave, _plan.DailyTime);
             // A reroll explicitly returns to Neow even for a profile still in the initial tutorial.
             // The native room generator legitimately leaves Act 1 without an Ancient when
             // NEOW_EPOCH is still locked. Install only the missing Neow room; never reroll
             // the already-generated room pools or change the profile's long-term unlocks.
-            if (!GameCompatibility.IsOfficial107 || IsMulti)
+            if (!GameCompatibility.UsesNativeSingleplayerStart || IsMulti)
             {
                 if (GameCompatibility.EnsureFirstActNeow(_plan!.NewState))
                     Log.Info("[SeedRestart] Added Neow to Act 1 for a profile without NEOW_EPOCH; existing room RNG preserved.");
@@ -485,8 +485,8 @@ internal sealed class RestartController
         try
         {
             var plan = _plan ?? throw new InvalidOperationException("重开计划已丢失");
-            if (GameCompatibility.IsOfficial107 && !IsMulti)
-                _plan = plan with { NewState = await GameCompatibility.StartOfficialSingleplayer(_game, plan) };
+            if (GameCompatibility.UsesNativeSingleplayerStart && !IsMulti)
+                _plan = plan with { NewState = await GameCompatibility.StartNativeSingleplayer(_game, plan) };
             else
             {
                 var start = AccessTools.Method(typeof(NGame), "StartRun", [typeof(RunState)])

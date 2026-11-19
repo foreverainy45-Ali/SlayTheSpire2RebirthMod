@@ -54,7 +54,7 @@ internal sealed record RestartPlan(RunState OldState, RunState NewState, List<Lo
         var dailyTime = RunManager.Instance.DailyTime;
         if (daily && !dailyTime.HasValue)
             throw new InvalidOperationException("每日挑战时间信息缺失，已阻止重开");
-        var officialUnlocks = GameCompatibility.IsOfficial107 ? GameCompatibility.GenerateOfficialUnlockState() : null;
+        var officialUnlocks = GameCompatibility.UsesNativeSingleplayerStart ? GameCompatibility.GenerateOfficialUnlockState() : null;
         var players = old.Players.Select(p => Player.CreateForNewRun(ModelDb.GetById<CharacterModel>(p.Character.Id),
             officialUnlocks ?? p.UnlockState, p.NetId)).ToList();
         var actModels = acts.Select(id => ModelDb.GetById<ActModel>(ModelId.Deserialize(id)).ToMutable()).ToList();
