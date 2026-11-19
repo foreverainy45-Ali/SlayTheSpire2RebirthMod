@@ -68,6 +68,23 @@ internal static class GameCompatibility
         method.Invoke(manager, [false]);
     }
 
+    public static bool EnsureFirstActNeow(RunState state)
+    {
+        var firstAct = state.Acts.FirstOrDefault()
+            ?? throw new InvalidOperationException("新局没有第一幕");
+        var rooms = AccessTools.Field(typeof(ActModel), "_rooms")?.GetValue(firstAct)
+            ?? throw new MissingFieldException(typeof(ActModel).FullName, "_rooms");
+        var ancientField = AccessTools.Field(rooms.GetType(), "_ancient")
+            ?? throw new MissingFieldException(rooms.GetType().FullName, "_ancient");
+        var current = ancientField.GetValue(rooms) as AncientEventModel;
+        if (current?.Id.ToString() == "EVENT.NEOW") return false;
+
+        var neow = ModelDb.AllAncients.SingleOrDefault(model => model.Id.ToString() == "EVENT.NEOW")
+            ?? throw new InvalidOperationException("模型库中未找到 EVENT.NEOW");
+        ancientField.SetValue(rooms, neow);
+        return true;
+    }
+
     public static bool IsCustomGame(RunState state) =>
         (bool?)AccessTools.Property(typeof(RunState), "IsCustomGame")?.GetValue(state) ?? state.GameMode.ToString() == "Custom";
 

@@ -51,6 +51,7 @@ for($round=1;$round -le $Count;$round++) {
     $null=Await-Pair {param($h,$c) if($initiator -eq 'host'){$h.popupOpen}else{$c.popupOpen}}
     Command $initiator confirm_ui
     $null=Await-Pair {param($h,$c) $h.request -and $c.request -and
+        (($initiator -eq 'host' -and $h.nativeVoteOpen) -or ($initiator -eq 'client' -and $c.nativeVoteOpen)) -and
         (($voter -eq 'host' -and $h.popupOpen) -or ($voter -eq 'client' -and $c.popupOpen))}
     Command $voter cancel_ui
     $canceled=Await-Pair {param($h,$c) !$h.request -and !$c.request -and !$h.popupOpen -and !$c.popupOpen}
@@ -66,6 +67,7 @@ for($round=1;$round -le $Count;$round++) {
     $null=Await-Pair {param($h,$c) if($initiator -eq 'host'){$h.popupOpen}else{$c.popupOpen}}
     Command $initiator confirm_ui
     $null=Await-Pair {param($h,$c) $h.request -and $c.request -and
+        (($initiator -eq 'host' -and $h.nativeVoteOpen) -or ($initiator -eq 'client' -and $c.nativeVoteOpen)) -and
         (($voter -eq 'host' -and $h.popupOpen) -or ($voter -eq 'client' -and $c.popupOpen))}
     $watch=[Diagnostics.Stopwatch]::StartNew()
     Command $voter confirm_ui

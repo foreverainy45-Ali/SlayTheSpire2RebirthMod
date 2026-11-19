@@ -45,6 +45,7 @@ internal sealed class RestartController
     internal bool IsCommitted => _committed;
     internal bool DropOldNative => _dropNative;
     internal bool NativeLoadingOpen => _ui.NativeLoadingOpen;
+    internal bool NativeVoteOpen => _ui.NativeVoteOpen;
     internal string? LoadingStatus => _ui.LoadingStatus;
     internal string? LoadingQuote => _ui.LoadingQuote;
     internal string? RenderedQuote => _ui.RenderedQuote;
@@ -331,7 +332,17 @@ internal sealed class RestartController
             }
             if (_request == null || _failedAfterCommit) return;
             if (!_net!.IsConnected) { CancelLocal("联机连接已断开"); return; }
-            if (!CurrentMembers().ToHashSet().SetEquals(_request.Members)) { Abort("玩家成员发生变化"); return; }
+            // Before commit every peer must still match the original quorum. During the
+            // committed scene-free gap a beta client temporarily has no RunState, so it
+            // cannot enumerate the other players and CurrentMembers() would contain only
+            // itself. The host can still inspect ConnectedPeers and remains responsible
+            // for detecting departures; clients rely on their live host connection and
+            // the setup/load barriers after commit.
+            if ((!_committed || IsHost) && !CurrentMembers().ToHashSet().SetEquals(_request.Members))
+            {
+                Abort("玩家成员发生变化");
+                return;
+            }
             if (!_committed && !ReferenceEquals(RunManager.Instance.DebugOnlyGetState(), _observedState)) { Abort("当前对局已改变"); return; }
             if (!_committed && _sl.IsBusy) { Abort("快速 SL 已开始，取消换种请求"); return; }
             if (Now >= _deadline) { Abort(_committed ? "新局加载超时，请保留恢复文件和日志" : "换种请求超时"); return; }
@@ -446,8 +457,15 @@ internal sealed class RestartController
             else if (!GameCompatibility.IsOfficial107)
                 manager.SetUpNewSingleplayer(_plan!.NewState, _plan.ShouldSave, _plan.DailyTime);
             // A reroll explicitly returns to Neow even for a profile still in the initial tutorial.
-            // This does not change long-term unlocks or grant any opening reward automatically.
-            if (!GameCompatibility.IsOfficial107 || IsMulti) _plan!.NewState.ExtraFields.StartedWithNeow = true;
+            // The native room generator legitimately leaves Act 1 without an Ancient when
+            // NEOW_EPOCH is still locked. Install only the missing Neow room; never reroll
+            // the already-generated room pools or change the profile's long-term unlocks.
+            if (!GameCompatibility.IsOfficial107 || IsMulti)
+            {
+                if (GameCompatibility.EnsureFirstActNeow(_plan!.NewState))
+                    Log.Info("[SeedRestart] Added Neow to Act 1 for a profile without NEOW_EPOCH; existing room RNG preserved.");
+                _plan.NewState.ExtraFields.StartedWithNeow = true;
+            }
             _setup.Add(_net.NetId);
             if (!IsHost) Send(Message(MessageKind.SetupReady));
         }
@@ -595,8 +613,8 @@ internal sealed class RestartController
         }
         string text = $"{(IsDaily ? "请求以当日固定种子重开" : "请求以新随机种子重开")}\n同意 {_request.Votes.Length}/{_request.Members.Length}　剩余 {Math.Max(0, (int)(_deadline - Now).TotalSeconds)} 秒\n" +
             string.Join("　", _request.Members.Select((id, i) => $"玩家{i + 1}：{(_request.Votes.Contains(id) ? "同意" : "等待")}"));
-        if (_request.Initiator == _net!.NetId) _ui.Show("vote-own", text, ("取消请求", () => Abort("发起人取消了重开")));
-        else if (_request.Votes.Contains(_net.NetId)) _ui.Show("vote-wait", text, ("拒绝并取消", () => Vote(false)));
+        if (_request.Initiator == _net!.NetId) _ui.ShowVoteWaiting("vote-own", text, "取消请求", () => Abort("发起人取消了重开"));
+        else if (_request.Votes.Contains(_net.NetId)) _ui.ShowVoteWaiting("vote-wait", text, "拒绝并取消", () => Vote(false));
         else _ui.Show("vote", text, ("同意", () => Vote(true)), ("拒绝", () => Vote(false)));
     }
 

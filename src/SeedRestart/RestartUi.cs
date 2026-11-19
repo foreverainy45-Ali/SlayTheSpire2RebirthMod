@@ -3,6 +3,7 @@ using HarmonyLib;
 using MegaCrit.Sts2.addons.mega_text;
 using MegaCrit.Sts2.Core.Logging;
 using MegaCrit.Sts2.Core.Nodes.CommonUi;
+using MegaCrit.Sts2.Core.Nodes.GodotExtensions;
 using MegaCrit.Sts2.Core.Nodes.Multiplayer;
 
 namespace SeedRestart;
@@ -16,6 +17,8 @@ internal sealed class RestartUi
     private NGenericPopup? _loadingPopup;
     private NVerticalPopup? _loadingPanel;
     private MegaRichTextLabel? _quoteLabel;
+    private Callable? _nativeCancelCallable;
+    private string _nativeKey = "";
     private string _key = "";
     internal bool NativeLoadingOpen
     {
@@ -31,6 +34,7 @@ internal sealed class RestartUi
     }
     internal string? LoadingStatus { get; private set; }
     internal string? LoadingQuote { get; private set; }
+    internal bool NativeVoteOpen => NativeLoadingOpen && _nativeKey.StartsWith("vote-", StringComparison.Ordinal);
     internal string? RenderedQuote => GodotObject.IsInstanceValid(_quoteLabel) ? _quoteLabel!.Text : null;
     internal bool QuoteBottomCentered => GodotObject.IsInstanceValid(_quoteLabel) &&
         _quoteLabel!.HorizontalAlignment == HorizontalAlignment.Center &&
@@ -54,7 +58,7 @@ internal sealed class RestartUi
             : $"{status}\n\n{quote}";
         try
         {
-            if (NativeLoadingOpen && GodotObject.IsInstanceValid(_loadingPanel))
+            if (_nativeKey == "loading" && NativeLoadingOpen && GodotObject.IsInstanceValid(_loadingPanel))
             {
                 _loadingPanel!.SetText("Rebirth · 快速重开", status);
                 if (GodotObject.IsInstanceValid(_quoteLabel)) _quoteLabel!.Text = quote ?? "";
@@ -86,6 +90,41 @@ internal sealed class RestartUi
             return;
         }
         ShowOverlay("loading-fallback", fallbackBody);
+    }
+
+    public void ShowVoteWaiting(string key, string text, string cancelLabel, Action cancelAction)
+    {
+        LoadingStatus = null;
+        LoadingQuote = null;
+        try
+        {
+            if (_nativeKey == key && NativeLoadingOpen && GodotObject.IsInstanceValid(_loadingPanel))
+            {
+                _loadingPanel!.SetText("Rebirth · 快速重开", text);
+                CloseOverlay();
+                return;
+            }
+        }
+        catch (Exception e) when (e is ObjectDisposedException or InvalidOperationException)
+        {
+            Log.Warn("[SeedRestart] Native vote popup could not be updated; reopening or using fallback: " + e.Message);
+        }
+        CloseNativePopup();
+        try
+        {
+            CreatePersistentVotePopup(key, text, cancelLabel, cancelAction);
+        }
+        catch (Exception e)
+        {
+            Log.Warn("[SeedRestart] Native vote popup unavailable; using fallback: " + e.Message);
+            CloseNativePopup();
+        }
+        if (NativeLoadingOpen)
+        {
+            CloseOverlay();
+            return;
+        }
+        ShowOverlay(key + "-fallback", text, (cancelLabel, cancelAction));
     }
 
     private void ShowOverlay(string key, string text, params (string Label, Action Action)[] actions)
@@ -166,9 +205,41 @@ internal sealed class RestartUi
         _loadingLayer.AddChild(_loadingPopup);
         _owner.AddChild(_loadingLayer);
         _loadingPanel = _loadingPopup.GetNode<NVerticalPopup>("VerticalPopup");
+        _nativeKey = "loading";
         _loadingPanel.SetText("Rebirth · 快速重开", status);
         HideWaitingButtons(_loadingPanel);
         _quoteLabel = CreateQuoteLabel(_loadingPanel, quote);
+    }
+
+    private void CreatePersistentVotePopup(string key, string text, string cancelLabel, Action cancelAction)
+    {
+        _loadingLayer = new CanvasLayer { Name = "SeedRestartVoteWaiting", Layer = 120 };
+        var backdrop = new ColorRect
+        {
+            Name = "Backstop",
+            Color = new Color(0, 0, 0, 0.8f),
+            MouseFilter = Control.MouseFilterEnum.Stop
+        };
+        backdrop.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
+        _loadingPopup = NGenericPopup.Create() ?? throw new InvalidOperationException("游戏原生提示框创建失败");
+        _loadingPopup.Name = "NativeStoneVotePopup";
+        _loadingLayer.AddChild(backdrop);
+        _loadingLayer.AddChild(_loadingPopup);
+        _owner.AddChild(_loadingLayer);
+        _loadingPanel = _loadingPopup.GetNode<NVerticalPopup>("VerticalPopup");
+        _nativeKey = key;
+        _loadingPanel.SetText("Rebirth · 快速重开", text);
+        _loadingPanel.YesButton.Visible = false;
+        _loadingPanel.YesButton.FocusMode = Control.FocusModeEnum.None;
+        _loadingPanel.YesButton.MouseFilter = Control.MouseFilterEnum.Ignore;
+        _loadingPanel.NoButton.Visible = true;
+        _loadingPanel.NoButton.IsYes = false;
+        _loadingPanel.NoButton.SetText(cancelLabel);
+        _loadingPanel.NoButton.FocusMode = Control.FocusModeEnum.All;
+        _loadingPanel.NoButton.MouseFilter = Control.MouseFilterEnum.Stop;
+        _nativeCancelCallable = Callable.From<NButton>(_ => cancelAction());
+        _loadingPanel.NoButton.Connect(NClickableControl.SignalName.Released, _nativeCancelCallable.Value);
+        _loadingPanel.NoButton.GrabFocus();
     }
 
     private static MegaRichTextLabel CreateQuoteLabel(NVerticalPopup panel, string? quote)
@@ -220,6 +291,8 @@ internal sealed class RestartUi
         _loadingPopup = null;
         _loadingPanel = null;
         _quoteLabel = null;
+        _nativeCancelCallable = null;
+        _nativeKey = "";
     }
 
     private void CloseOverlay()

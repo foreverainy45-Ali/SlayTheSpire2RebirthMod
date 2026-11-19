@@ -187,6 +187,7 @@ internal static class RuntimeProbe
                     netIdentity = manager.NetService == null ? 0 : System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(manager.NetService),
                     request, committed = controller.IsCommitted,
                     nativeLoadingOpen = controller.NativeLoadingOpen,
+                    nativeVoteOpen = controller.NativeVoteOpen,
                     loadingStatus = controller.LoadingStatus,
                     loadingQuote = controller.LoadingQuote,
                     renderedQuote = controller.RenderedQuote,

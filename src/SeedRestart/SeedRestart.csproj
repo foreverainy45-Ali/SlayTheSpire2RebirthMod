@@ -4,7 +4,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AssemblyName>SeedRestart</AssemblyName>
-    <Version>0.5.1</Version>
+    <Version>0.5.2</Version>
     <Sts2Dir Condition="'$(Sts2Dir)' == ''">I:\SteamLibrary\steamapps\common\Slay the Spire 2</Sts2Dir>
     <GameLib>$(Sts2Dir)\data_sts2_windows_x86_64</GameLib>
     <JmcModLibDir Condition="'$(JmcModLibDir)' == ''">I:\SteamLibrary\steamapps\workshop\content\2868840\3747526103</JmcModLibDir>
